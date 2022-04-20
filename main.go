@@ -1,11 +1,18 @@
 package main
 
 import (
-	//"encoding/json"
-	//"errors"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+
+	"github.com/spf13/cobra"
+	"github.com/tidwall/gjson"
+)
+
+var (
+	blockId         string
+	numTransactions int
 )
 
 type ParsedBlock struct {
@@ -15,70 +22,99 @@ type ParsedBlock struct {
 }
 
 const (
-	HashKey        = "hash"
-	MerkleRootKey  = "mrkl_root"
-	TransactionKey = "tx"
+	RawBlockURITemplate   = "https://blockchain.info/rawblock/%v"
+	BlockHashPath         = "hash"
+	MerkleRootPath        = "mrkl_root"
+	TransactionHashesPath = "tx.#.hash"
 )
 
-func main() {
-	cmd := &cobra.Command{
+var (
+	rootCmd = &cobra.Command{
+		Use:   "mrklctl",
+		Short: "A CLI tool for downloading blocks and understanding their Merkle Trees",
+	}
+	getBlockCmd = &cobra.Command{
+		Use:   "get_block",
+		Short: "Fetches a block with given ID and outputs the parts the block used in the Merkle tree construction",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Hello, Modules!")
+			if err := getBlock(blockId, numTransactions); err != nil {
+				panic(err)
+			}
 		},
 	}
+)
 
-	fmt.Println("Calling cmd.Execute()!")
-	cmd.Execute()
-
-	//blockId := "0000000000000000000013a86194dc6107ddc74dbabd3f2aa794d3722774cc03"
-	//_, err := fetchBlock(blockId)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//fmt.Println("hello world")
-	//parsedBlock, err := parseBlock(block)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//fmt.Printf("%+v", parsedBlock)
+func init() {
+	getBlockCmd.PersistentFlags().StringVarP(&blockId, "block_id", "", "", "Block of targeted block")
+	getBlockCmd.PersistentFlags().IntVarP(&numTransactions, "num_transactions", "", 10, "Number of transactions to print, 0 for all transactions")
 }
 
-//func parseBlock(rawBlock []byte) (*ParsedBlock, error) {
-//	m := make(map[string]interface{})
-//	json.Unmarshal(rawBlock, &m)
-//	blockHash, ok := m[HashKey]
-//	if !ok {
-//		return nil, errors.New("failed to find block hash")
-//	}
-//	blockHashStr, ok := blockHash.(string)
-//	if !ok {
-//		return nil, errors.New("failed to convert block has to string")
-//	}
-//	merkleRoot, ok := m[MerkleRootKey]
-//	if !ok {
-//		return nil, errors.New("failed to find merkle root")
-//	}
-//	merkleRootStr, ok := merkleRoot.(string)
-//	if !ok {
-//		return nil, errors.New("failed to convert merkle root to string")
-//	}
-//	transactions, ok := m[TransactionKey]
-//	if !ok {
-//		return nil, errors.New("failed to find transactions")
-//	}
-//
-//}
+func main() {
+	rootCmd.AddCommand(getBlockCmd)
+	if err := rootCmd.Execute(); err != nil {
+		panic(err)
+	}
+}
 
-func fetchBlock(blockId string) ([]byte, error) {
-	url := fmt.Sprintf("https://blockchain.info/rawblock/%v", blockId)
+func getBlock(blockId string, numTransactions int) error {
+	if blockId == "" {
+		return errors.New("block_id is required")
+	}
+	rawBlock, err := fetchBlock(blockId)
+	if err != nil {
+		return err
+	}
+	pb, err := parseBlock(rawBlock)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Block Hash: ", pb.Hash)
+	fmt.Println("Merkle Root: ", pb.MerkleRoot)
+	fmt.Println("=== Transactions ===")
+	lastIndex := numTransactions - 1
+	if numTransactions == 0 || lastIndex > len(pb.TransactionHashes)-1 {
+		lastIndex = len(pb.TransactionHashes) - 1
+	}
+	for i := 0; i <= lastIndex; i++ {
+		fmt.Println(pb.TransactionHashes[i])
+	}
+	return nil
+}
+
+func parseBlock(rawBlock string) (*ParsedBlock, error) {
+	result := &ParsedBlock{}
+	hashKey := gjson.Get(rawBlock, BlockHashPath)
+	if !hashKey.Exists() {
+		return nil, fmt.Errorf("failed to extract %v from block", BlockHashPath)
+	}
+	result.Hash = hashKey.String()
+	merkleRoot := gjson.Get(rawBlock, MerkleRootPath)
+	if !merkleRoot.Exists() {
+		return nil, fmt.Errorf("failed to extract %v from block", MerkleRootPath)
+	}
+	result.MerkleRoot = merkleRoot.String()
+	transactionHashes := gjson.Get(rawBlock, TransactionHashesPath)
+	if !transactionHashes.Exists() || !transactionHashes.IsArray() {
+		return nil, fmt.Errorf("failed to extract %v from block", TransactionHashesPath)
+	}
+	transactionHashes.ForEach(func(_, value gjson.Result) bool {
+		result.TransactionHashes = append(result.TransactionHashes, value.String())
+		return true
+	})
+	return result, nil
+}
+
+func fetchBlock(blockId string) (string, error) {
+	url := fmt.Sprintf(RawBlockURITemplate, blockId)
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return body, nil
+	return string(body), nil
 }
