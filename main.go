@@ -68,7 +68,11 @@ func getBlock(blockId string, numTransactions int) error {
 	if err != nil {
 		return err
 	}
+	printBlock(pb)
+	return nil
+}
 
+func printBlock(pb *ParsedBlock) {
 	fmt.Println("Block Hash: ", pb.Hash)
 	fmt.Println("Merkle Root: ", pb.MerkleRoot)
 	fmt.Println("=== Transactions ===")
@@ -79,7 +83,6 @@ func getBlock(blockId string, numTransactions int) error {
 	for i := 0; i <= lastIndex; i++ {
 		fmt.Println(pb.TransactionHashes[i])
 	}
-	return nil
 }
 
 func parseBlock(rawBlock string) (*ParsedBlock, error) {
@@ -89,11 +92,13 @@ func parseBlock(rawBlock string) (*ParsedBlock, error) {
 		return nil, fmt.Errorf("failed to extract %v from block", BlockHashPath)
 	}
 	result.Hash = hashKey.String()
+
 	merkleRoot := gjson.Get(rawBlock, MerkleRootPath)
 	if !merkleRoot.Exists() {
 		return nil, fmt.Errorf("failed to extract %v from block", MerkleRootPath)
 	}
 	result.MerkleRoot = merkleRoot.String()
+	
 	transactionHashes := gjson.Get(rawBlock, TransactionHashesPath)
 	if !transactionHashes.Exists() || !transactionHashes.IsArray() {
 		return nil, fmt.Errorf("failed to extract %v from block", TransactionHashesPath)
